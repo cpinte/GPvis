@@ -13,38 +13,70 @@ def prepare_ms_file(ms_file):
       3. export each individual execution in a npz file
     """
 
+    if ms_file[-3:]!='.ms':
+        print("MS name must end in '.ms'")
+        return
+
+    # Removing existing structure
+    clean_spavg()
+
     # Averaging over spectral window and removing flags
-    split_name = os.path.splitext(ms_file)
-    filename = split_name[0] ; ext = split_name[1]
-    ms_file_avg = filename+"_avg"+ext
-    os.system("rm -rf " + filename+"_avg*")  # removing existing structure
-    casatasks.mstransform(vis=ms_file, outputvis=ms_file_avg, datacolumn='data', chanaverage=True, chanbin=3840, keepflags=False)
+    spectral_avg(ms_file)
 
     # splitting the main ms file into individual observations
-    split_name =  filename+"_avg_split_"
+    filename = ms_file.replace(".ms","")
+    ms_file_avg = filename+"_spavg.ms"
+    split_name =  filename+"_spavg_split_"
     split_all_obs(ms_file_avg, split_name)
 
-    # finding appropriate files
-    ms_files = glob.glob(split_name + "*.ms")
-
     # exporting each split ms into a npz file
+    ms_files = glob.glob(split_name + "*.ms")
     for i, file in enumerate(ms_files):
         export_MS(file)
 
 
+def clean_spavg():
+    """
+    Remove all spectrally averaged files
+    """
+    os.system("rm -rf *spavg*")
+
+
 # The functions below are adapted from the DSHAP reduction utils and updated to work with modular casa
-def split_all_obs(msfile, nametemplate):
+def spectral_avg(ms_file):
+    """
+    Average all spectral windows to 1 channel
     """
 
+    outputvis = ms_file.replace('.ms','_spavg.ms')
+
+    print("# Spectrally averaging and removing flagged data from %s to %s" % (ms_file, outputvis))
+
+    # get information about spectral windows
+    tb = casatools.table()
+    tb.open(ms_file+'/SPECTRAL_WINDOW')
+    num_chan = tb.getcol('NUM_CHAN').tolist()
+    tb.close()
+
+    # spectral averaging (1 channel per SPW)
+    os.system('rm -rf %s' % outputvis)
+    casatasks.split(vis=ms_file, width=num_chan, datacolumn='data',outputvis=outputvis,keepflags=False)
+
+
+def split_all_obs(ms_file, nametemplate):
+    """
     Split out individual observations in a measurement set
 
     Parameters
     ==========
-    msfile: Name of measurement set, ending in '.ms' (string)
+    ms_file: Name of measurement set, ending in '.ms' (string)
     nametemplate: Template name of output measurement sets for individual observations (string)
     """
+
+    print("# Splitting %s" % ms_file)
+
     tb = casatools.table()
-    tb.open(msfile)
+    tb.open(ms_file)
     spw_col = tb.getcol('DATA_DESC_ID')
     obs_col = tb.getcol('OBSERVATION_ID')
     field_col = tb.getcol('FIELD_ID')
@@ -68,45 +100,26 @@ def split_all_obs(msfile, nametemplate):
         #start of CASA commands
         outputvis = nametemplate+'%d.ms' % i
         os.system('rm -rf '+outputvis)
-        print("#Saving observation %d of %s to %s" % (i, msfile, outputvis))
-        casatasks.split(vis=msfile,
+        print("# Saving observation %d of %s to %s" % (i, ms_file, outputvis))
+        casatasks.split(vis=ms_file,
               spw = spw,
               field = field,
               outputvis = outputvis,
               datacolumn='data')
 
 
-def export_MS(msfile):
+def export_MS(ms_file):
     """
-    Spectrally averages visibilities to a single channel per SPW and exports to .npz file
+    Export file to .npz file
 
-    msfile: Name of CASA measurement set, ending in '.ms' (string)
+    ms_file: Name of CASA measurement set, ending in '.ms' (string)
     """
 
-    print("#-- Processing to "+msfile)
-
-    filename = msfile
-    if filename[-3:]!='.ms':
-        print("MS name must end in '.ms'")
-        return
-    # strip off the '.ms'
-    MS_filename = filename.replace('.ms', '')
-
-
-    # get information about spectral windows
-    tb = casatools.table()
-    tb.open(MS_filename+'.ms/SPECTRAL_WINDOW')
-    num_chan = tb.getcol('NUM_CHAN').tolist()
-    tb.close()
-
-    # spectral averaging (1 channel per SPW)
-    os.system('rm -rf %s' % MS_filename+'_spavg.ms')
-    casatasks.split(vis=MS_filename+'.ms', width=num_chan, datacolumn='data',
-    outputvis=MS_filename+'_spavg.ms')
+    print("# Exporting "+ms_file)
 
     # get the data tables
-    #tb.open(MS_filename+'_spavg.ms')
-    tb.open(MS_filename+'.ms')
+    tb = casatools.table()
+    tb.open(ms_file)
     data   = np.squeeze(tb.getcol("DATA"))
     flag   = np.squeeze(tb.getcol("FLAG"))
     uvw    = tb.getcol("UVW")
@@ -117,45 +130,31 @@ def export_MS(msfile):
     time   = tb.getcol("TIME")
     tb.close()
 
+    print("---")
+    print(data.shape)
+    print(flag.shape)
 
-    print(" Testing flags ....")
-    for k, f in enumerate(flag[0,:]):
-        if f:
-            print(k, f, flag[0,k], flag[1,k])
-    for k, f in enumerate(flag[1,:]):
-        if f:
-            print(k, f, flag[0,k], flag[1,k])
-    print("Done")
+    if np.any(flag):
+        print("# ---- WARNING --- : data has flags")
+    else:
+        print("# - No flags: OK")
 
-    print(" Testing time ....")
-    print(is_sorted(time))
-    print(" Done")
+    if np.all(np.isfinite(data.real)):
+        print("# - real part: OK")
+    else:
+        print("# ---- WARNING --- : real part has NaN")
+
+    if np.all(np.isfinite(data.imag)):
+        print("# - imaginary part: OK")
+    else:
+        print("# ---- WARNING --- : imaginary part has NaN")
 
     # get frequency information
-    tb.open(MS_filename+'_spavg.ms/SPECTRAL_WINDOW')
+    tb.open(ms_file+'/SPECTRAL_WINDOW')
     freqlist = np.squeeze(tb.getcol("CHAN_FREQ"))
     if (len(freqlist.shape) == 0):
         freqlist = np.array([freqlist])
     tb.close()
-
-    # get rid of any flagged columns
-    good   = np.squeeze(np.any(flag, axis=0)==False)
-
-    print("Selecting", len(np.where(good)[0]), "/", flag.shape, time.shape, ant1.shape, ant2.shape)
-    #ValueError
-
-
-
-
-    data   = data[:,good]
-    flag = flag[:,good]
-    weight = weight[:,good]
-    uvw    = uvw[:,good]
-    spwid = spwid[good]
-
-    ant1 = ant1[good]
-    ant2 = ant2[good]
-    time = time[good]
 
     # compute spatial frequencies in lambda units
     get_freq = lambda ispw: freqlist[ispw]
@@ -168,21 +167,19 @@ def export_MS(msfile):
     Re  = np.sum(data.real*weight, axis=0) / Wgt
     Im  = np.sum(data.imag*weight, axis=0) / Wgt
 
-    for k, r in enumerate(Re):
-        if not np.isfinite(r):
-            print(k, r)
-            print(data.shape, flag.shape)
-            print(data[:,k].real)
-            print(weight[:,k])
-            print(flag[:,k])
-            print("----")
-            #raise ValueError("Non-finite values found in Vis")
+    #for k, r in enumerate(Re):
+    #    if not np.isfinite(r):
+    #        print(k, r)
+    #        print(data.shape, flag.shape)
+    #        print(data[:,k].real)
+    #        print(weight[:,k])
+    #        print(flag[:,k])
+    #        print("----")
+    #        #raise ValueError("Non-finite values found in Vis")
 
     Vis = Re + 1j*Im
 
-
-    #output to npz file and delete intermediate measurement set
-    os.system('rm -rf %s' % MS_filename+'_spavg.ms')
-    os.system('rm -rf '+MS_filename+'.vis.npz')
-    np.savez(MS_filename+'.vis', u=u, v=v, Vis=Vis, Wgt=Wgt, ant1=ant1, ant2=ant2, time=time, spwid=spiwd)
-    print("#Measurement set exported to %s" % (MS_filename+'.vis.npz',))
+    npz_file = ms_file.replace('.ms', '.viz.npz')
+    os.system('rm -rf '+npz_file)
+    np.savez(npz_file, u=u, v=v, Vis=Vis, Wgt=Wgt, ant1=ant1, ant2=ant2, time=time, spwid=spwid)
+    print("#Measurement set exported to %s" % (npz_file))
