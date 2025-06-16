@@ -103,7 +103,7 @@ def split_all_obs(ms_file, nametemplate):
         #start of CASA commands
         outputvis = nametemplate+'%d.ms' % i
         os.system('rm -rf '+outputvis)
-        print("# Saving observation %d of %s to %s" % (i, ms_file, outputvis))
+        print("   - Saving observation %d of %s to %s" % (i, ms_file, outputvis))
         casatasks.split(vis=ms_file,
               spw = spw,
               field = field,
@@ -133,24 +133,23 @@ def export_MS(ms_file):
     time   = tb.getcol("TIME")
     tb.close()
 
-    print("---")
-    print(data.shape)
-    print(flag.shape)
-
     if np.any(flag):
-        print("# ---- WARNING --- : data has flags")
+        print("  ---- WARNING --- : data has flags")
     else:
-        print("# - No flags: OK")
+        print("  - No flags: OK")
 
     if np.all(np.isfinite(data.real)):
         print("# - real part: OK")
     else:
-        print("# ---- WARNING --- : real part has NaN")
+        print("  ---- WARNING --- : real part has NaN")
+        print(np.all(np.isfinite(data.real)), np.any(np.isnan(data.real)), np.all(np.isfinite(data)), np.any(np.isnan(data)))
 
     if np.all(np.isfinite(data.imag)):
-        print("# - imaginary part: OK")
+        print("  - imaginary part: OK")
     else:
-        print("# ---- WARNING --- : imaginary part has NaN")
+        print("  ---- WARNING --- : imaginary part has NaN")
+        print(np.all(np.isfinite(data.imag)), np.any(np.isnan(data.imag)), np.all(np.isfinite(data)), np.any(np.isnan(data)))
+
 
     # get frequency information
     tb.open(ms_file+'/SPECTRAL_WINDOW')
@@ -169,16 +168,6 @@ def export_MS(ms_file):
     Wgt = np.sum(weight, axis=0)
     Re  = np.sum(data.real*weight, axis=0) / Wgt
     Im  = np.sum(data.imag*weight, axis=0) / Wgt
-
-    #for k, r in enumerate(Re):
-    #    if not np.isfinite(r):
-    #        print(k, r)
-    #        print(data.shape, flag.shape)
-    #        print(data[:,k].real)
-    #        print(weight[:,k])
-    #        print(flag[:,k])
-    #        print("----")
-    #        #raise ValueError("Non-finite values found in Vis")
 
     Vis = Re + 1j*Im
 
@@ -202,7 +191,8 @@ def flag_NaN(ms_file,outputvis):
     flag = tb.getcol("FLAG")
 
     # Adding a flag on data with NaN on real or imaginary part
-    isnan = np.isnan(data)
+    #isnan = np.isnan(data)
+    isnan = np.logical_not(np.isfinite(data))
 
     if (np.any(isnan)):
         print("   - Data table has NaN, flagging them")
