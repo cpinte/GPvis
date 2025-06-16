@@ -27,16 +27,19 @@ def prepare_ms_file(ms_file):
     flag_NaN(ms_file, ms_file_no_NaN)
 
     # Averaging over spectral window and removing flags
+    print(" ")
     ms_file_avg = filename+"_spavg.ms"
     spectral_avg(ms_file_no_NaN, ms_file_avg)
 
     # splitting the main ms file into individual observations
+    print(" ")
     split_name =  filename+"_spavg_split_"
     split_all_obs(ms_file_avg, split_name)
 
     # exporting each split ms into a npz file
     ms_files = glob.glob(split_name + "*.ms")
     for i, file in enumerate(ms_files):
+        print(" ")
         export_MS(file)
 
 
@@ -139,7 +142,7 @@ def export_MS(ms_file):
         print("  - No flags: OK")
 
     if np.all(np.isfinite(data.real)):
-        print("# - real part: OK")
+        print("  - real part: OK")
     else:
         print("  ---- WARNING --- : real part has NaN")
         print(np.all(np.isfinite(data.real)), np.any(np.isnan(data.real)), np.all(np.isfinite(data)), np.any(np.isnan(data)))
@@ -174,7 +177,7 @@ def export_MS(ms_file):
     npz_file = ms_file.replace('.ms', '.viz.npz')
     os.system('rm -rf '+npz_file)
     np.savez(npz_file, u=u, v=v, Vis=Vis, Wgt=Wgt, ant1=ant1, ant2=ant2, time=time, spwid=spwid)
-    print("#Measurement set exported to %s" % (npz_file))
+    print(" --->  Measurement set exported to %s" % (npz_file))
 
 
 def flag_NaN(ms_file,outputvis):
