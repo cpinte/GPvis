@@ -17,15 +17,20 @@ def prepare_ms_file(ms_file):
         print("MS name must end in '.ms'")
         return
 
+    filename = ms_file.replace(".ms","")
+
     # Removing existing structure
     clean_spavg()
 
+    # Flagging any potential NaN
+    ms_file_no_NaN = filename+"_no_NaN.ms"
+    flag_NaN(ms_file, ms_file_no_NaN)
+
     # Averaging over spectral window and removing flags
-    spectral_avg(ms_file)
+    ms_file_avg = filename+"_spavg.ms"
+    spectral_avg(ms_file_no_NaN, ms_file_avg)
 
     # splitting the main ms file into individual observations
-    filename = ms_file.replace(".ms","")
-    ms_file_avg = filename+"_spavg.ms"
     split_name =  filename+"_spavg_split_"
     split_all_obs(ms_file_avg, split_name)
 
@@ -43,12 +48,10 @@ def clean_spavg():
 
 
 # The functions below are adapted from the DSHAP reduction utils and updated to work with modular casa
-def spectral_avg(ms_file):
+def spectral_avg(ms_file,outputvis):
     """
     Average all spectral windows to 1 channel
     """
-
-    outputvis = ms_file.replace('.ms','_spavg.ms')
 
     print("# Spectrally averaging and removing flagged data from %s to %s" % (ms_file, outputvis))
 
@@ -120,7 +123,7 @@ def export_MS(ms_file):
     # get the data tables
     tb = casatools.table()
     tb.open(ms_file)
-    data   = np.squeeze(tb.getcol("DATA"))
+    data   = np.squeeze(tb.getcol("DATA"))  # Note the squeeze here
     flag   = np.squeeze(tb.getcol("FLAG"))
     uvw    = tb.getcol("UVW")
     weight = tb.getcol("WEIGHT")
@@ -183,3 +186,82 @@ def export_MS(ms_file):
     os.system('rm -rf '+npz_file)
     np.savez(npz_file, u=u, v=v, Vis=Vis, Wgt=Wgt, ant1=ant1, ant2=ant2, time=time, spwid=spwid)
     print("#Measurement set exported to %s" % (npz_file))
+
+
+def flag_NaN(ms_file,outputvis):
+
+    print("# Flagging NaN from %s to %s" % (ms_file, outputvis))
+
+    # copy original ms file into new file
+    os.system("rm -rf " + outputvis)
+    os.system("cp -r " + ms_file + " " + outputvis)
+
+    tb = casatools.table()
+    tb.open(outputvis, nomodify=False)
+    data = tb.getcol("DATA")
+    flag = tb.getcol("FLAG")
+
+    # Adding a flag on data with NaN on real or imaginary part
+    isnan = np.isnan(data)
+
+    if (np.any(isnan)):
+        print("   - Data table has NaN, flagging them")
+        flag = flag | isnan
+
+        # Updating flags in ms file
+        tb.putcol("FLAG",flag)
+        tb.flush()
+    else:
+        print("   - No NaN in "+ms_file)
+
+    tb.close()
+
+
+
+
+
+def update_ms(target):
+    """ FUNCTION THAT IS CALLED FROM MAIN.py """
+    #target = "Elias24"
+
+    # finding appropriate ms files
+    search_name = target + "_cont_avg_split_*.ms"
+    ms_files = glob.glob(search_name)
+    model_names = []
+
+    # iterating over found files and updating visibility
+    for i, ms_file in enumerate(ms_files):
+        # create model name
+        model = ms_file.replace('cont_avg_split', 'model')      # output ms
+        model_names.append(model)
+
+        # find npz file
+        npz_file = ms_file.replace('.ms', '_updated.vis.npz')
+
+        # load visibility data from npz file
+        vis = dict(np.load(npz_file))['Vis']
+
+        # copy original ms file into new file
+        os.system("rm -rf " + model)
+        os.system("cp -r " + ms_file + " " + model)
+
+        # open model dataset
+        tb.open(model)
+        data = tb.getcol("DATA")    # grab existing structure
+        flag = tb.getcol("FLAG")
+        tb.close()
+
+        # note flagged columns
+        flagged = np.all(flag, axis=(0, 1))
+        unflagged = np.squeeze(np.where(flagged == False))
+
+        # replace original data with updated vis
+        data[:, :, unflagged] = vis
+        tb.open(model, nomodify=False)
+        tb.putcol("DATA", data)
+
+        tb.flush()
+        tb.close()
+
+    # concatenating separated ms files
+    concat(vis=model_names, concatvis=target+'_final_data.ms')
