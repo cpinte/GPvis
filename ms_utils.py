@@ -174,7 +174,7 @@ def export_MS(ms_file):
 
     Vis = Re + 1j*Im
 
-    npz_file = ms_file.replace('.ms', '.viz.npz')
+    npz_file = ms_file.replace('.ms', '.vis.npz')
     os.system('rm -rf '+npz_file)
     np.savez(npz_file, u=u, v=v, Vis=Vis, Wgt=Wgt, ant1=ant1, ant2=ant2, time=time, spwid=spwid)
     print(" --->  Measurement set exported to %s" % (npz_file))
@@ -210,51 +210,62 @@ def flag_NaN(ms_file,outputvis):
     tb.close()
 
 
+def create_GP_ms(ms_file):
+    # Recreate the global ms file
+
+    # Find all the splitted ms files
+    basename =  ms_file.replace('.ms', '')
+    ms_files = glob.glob(basename + "_split*[0-9].ms")
+
+    for ms in ms_files:
+        print(ms)
+        update_ms_file(ms)
+
+    # re-concatenatie all separated ms files
+    ms_files = glob.glob(basename + "_split*[0-9]_updated.ms")
+
+    casatasks.concat(vis=ms_files, concatvis=basename+'_updated.ms')
 
 
 
-def update_ms(target):
-    """ FUNCTION THAT IS CALLED FROM MAIN.py """
-    #target = "Elias24"
+def update_ms_file(ms_file):
+    # update individual ms file with data from updated npz file
 
-    # finding appropriate ms files
-    search_name = target + "_cont_avg_split_*.ms"
-    ms_files = glob.glob(search_name)
-    model_names = []
 
-    # iterating over found files and updating visibility
-    for i, ms_file in enumerate(ms_files):
-        # create model name
-        model = ms_file.replace('cont_avg_split', 'model')      # output ms
-        model_names.append(model)
+    # find npz file
+    npz_file = ms_file.replace('.ms', '_updated.vis.npz')
 
-        # find npz file
-        npz_file = ms_file.replace('.ms', '_updated.vis.npz')
+    new_ms = ms_file.replace('.ms', '_updated.ms')
 
-        # load visibility data from npz file
-        vis = dict(np.load(npz_file))['Vis']
 
-        # copy original ms file into new file
-        os.system("rm -rf " + model)
-        os.system("cp -r " + ms_file + " " + model)
+    print("Updating "+npz_file+" into "+new_ms)
 
-        # open model dataset
-        tb.open(model)
-        data = tb.getcol("DATA")    # grab existing structure
-        flag = tb.getcol("FLAG")
-        tb.close()
+    # load visibility data from npz file
+    vis = dict(np.load(npz_file))['Vis']
 
-        # note flagged columns
-        flagged = np.all(flag, axis=(0, 1))
-        unflagged = np.squeeze(np.where(flagged == False))
+    # copy original ms file into new file
+    os.system("rm -rf " + new_ms)
+    os.system("cp -r " + ms_file + " " + new_ms)
 
-        # replace original data with updated vis
-        data[:, :, unflagged] = vis
-        tb.open(model, nomodify=False)
-        tb.putcol("DATA", data)
+    # open model dataset
+    tb = casatools.table()
+    print("Updating "+new_ms)
+    tb.open(new_ms, nomodify=False)
+    data = tb.getcol("DATA")    # grab existing structure
+    flag = tb.getcol("FLAG")
 
-        tb.flush()
-        tb.close()
+    print(data.shape, vis.shape)
+
+    # replace original data with updated vis
+    # We force both polarisation to have the same values
+    data[0, 0, :] = vis
+    data[1, 0, :] = vis
+    tb.putcol("DATA", data)
+
+    tb.flush()
+    tb.close()
+
+
 
     # concatenating separated ms files
-    concat(vis=model_names, concatvis=target+'_final_data.ms')
+#    concat(vis=model_names, concatvis=target+'_final_data.ms')
